@@ -123,9 +123,19 @@ void pfsCacheFlushAllDirty(pfs_mount_t *pfsMount)
 				pfsCacheBuf[i].flags & PFS_CACHE_FLAG_DIRTY)
 					pfsCacheTransfer(&pfsCacheBuf[i], 1);
 		}
-	}
 
-	pfsJournalReset(pfsMount);
+		// The log only holds entries when something was written to it above.
+		pfsJournalReset(pfsMount);
+	}
+	else
+	{
+		// Nothing went into the log, so it does not have to be rewritten. Still flush the
+		// drive's cache as pfsJournalReset() did: file data is written without the cache.
+#ifdef PFS_SUPPORT_BHDD
+		if (strcmp(pfsMount->blockDev->devName, "bhdd") != 0)
+#endif
+			pfsMount->blockDev->flushCache(pfsMount->fd);
+	}
 }
 
 pfs_cache_t *pfsCacheAlloc(pfs_mount_t *pfsMount, u16 sub, u32 block,

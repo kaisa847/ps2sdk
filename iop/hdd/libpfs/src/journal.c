@@ -142,7 +142,11 @@ int pfsJournalRestore(pfs_mount_t *pfsMount)
 
 	if(pfsJournalBuf.num == 0)
 	{
-		return pfsJournalReset(pfsMount);
+		// The log on disk is valid and empty, so there is nothing to replay and nothing to
+		// rewrite. Only bring the in-memory copy into the state pfsJournalReset() leaves it in.
+		memset(&pfsJournalBuf, 0, sizeof(pfs_journal_t));
+		pfsJournalBuf.magic=PFS_JOUNRNAL_MAGIC;
+		return 0;
 	}
 
 	clink = pfsCacheAllocClean(&result);

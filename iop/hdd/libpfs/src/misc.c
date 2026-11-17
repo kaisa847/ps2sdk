@@ -98,7 +98,7 @@ int pfsGetTime(pfs_datetime_t *tm)
 	struct tm timeinfo;
 	time(&rawtime);
 	// Convert to JST
-	rawtime += (-9 * 60 * 60);
+	rawtime += (9 * 60 * 60);
 #ifdef _WIN32
 	gmtime_s(&timeinfo, &rawtime);
 #else

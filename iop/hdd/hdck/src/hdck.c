@@ -250,8 +250,8 @@ static void RemoveBadPartitions(int device, apa_cache_t *clink)
     if ((clink2 = apaCacheGetHeader(device, PrivateData.ErrorPartitionPrevLBA, 0, &result)) != NULL) {
         clink2->header->next = 0;
         clink->header->prev  = PrivateData.ErrorPartitionPrevLBA;
-        clink2->header->flags |= APA_CACHE_FLAG_DIRTY;
-        clink->header->flags |= APA_CACHE_FLAG_DIRTY;
+        clink2->flags |= APA_CACHE_FLAG_DIRTY;
+        clink->flags |= APA_CACHE_FLAG_DIRTY;
 
         apaCacheFlushAllDirty(device);
         apaCacheFree(clink2);

@@ -1089,6 +1089,7 @@ static int FsckOpen(iomanX_iop_file_t *fd, const char *name, int flags, int mode
     }
 
     if ((result = CheckSuperBlock(&MainPFSMount)) < 0) {
+        iomanX_close(blockfd);
         MainPFSMount.fd = 0;
         PFS_PRINTF("error: cannot continue.\n");
         return result;
@@ -1120,6 +1121,7 @@ static int FsckOpen(iomanX_iop_file_t *fd, const char *name, int flags, int mode
         fd->privdata = &MainPFSMount;
         result       = 0;
     } else {
+        iomanX_close(blockfd);
         MainPFSMount.fd = 0;
     }
 

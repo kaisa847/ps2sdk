@@ -620,7 +620,7 @@ static void fileInfoToStat(FILINFO *fno, iox_stat_t *stat)
 
     stime[3] = (ftime >> 11); // Hours
     stime[2] = (ftime >> 5) & 63; // Minutes
-    stime[1] = (ftime << 1) & 31; // Seconds (multiplied by 2)
+    stime[1] = (ftime & 31) * 2; // Seconds (stored divided by 2)
 
     memcpy(stat->ctime, stime, sizeof(stime));
     memcpy(stat->atime, stime, sizeof(stime));

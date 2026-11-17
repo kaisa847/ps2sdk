@@ -567,7 +567,7 @@ static int CheckPartitions(int device, apa_cache_t *clink)
                         } else {
                             // Check if the sub-partition belongs to the main partition's sub-partition list.
                             if ((clink_sub = apaCacheGetHeader(device, clink2->header->main, 0, &result)) != NULL) {
-                                for (count = 0; (u32)count < clink2->header->nsub; count++) {
+                                for (count = 0; (u32)count < clink_sub->header->nsub; count++) {
                                     if (clink_sub->header->subs[count].start == *ptr) {
                                         break;
                                     }

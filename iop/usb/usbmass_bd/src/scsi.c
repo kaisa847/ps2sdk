@@ -224,8 +224,9 @@ static int scsi_warmup(struct block_device *bd)
 
     u64 sectorCount = bd->sectorCount;
     U64_2XU32(sectorCount);
-    M_PRINTF("rc10 = 0x%08x%08x %u-byte logical blocks: (%lu MB / %lu MiB)\n", sectorCount_u32[1], sectorCount_u32[0], bd->sectorSize,
-        (u32)(bd->sectorCount / ((1000 * 1000) / bd->sectorSize)), (u32)(bd->sectorCount / ((1024 * 1024) / bd->sectorSize)));
+    // Size in MiB with a shift: a 64-bit division here would link __udivdi3 (1.4 KB) into the module.
+    M_PRINTF("rc10 = 0x%08x%08x %u-byte logical blocks: (%lu MiB)\n", sectorCount_u32[1], sectorCount_u32[0], bd->sectorSize,
+        (u32)((bd->sectorCount * bd->sectorSize) >> 20));
 
     if (bd->sectorCount == 0xffffffffull)
     {
@@ -237,8 +238,8 @@ static int scsi_warmup(struct block_device *bd)
 
             sectorCount = bd->sectorCount;
             U64_2XU32(sectorCount);
-            M_PRINTF("rc16 = 0x%08x%08x %u-byte logical blocks: (%lu MB / %lu MiB)\n", sectorCount_u32[1], sectorCount_u32[0], bd->sectorSize,
-                (u32)(bd->sectorCount / ((1000 * 1000) / bd->sectorSize)), (u32)(bd->sectorCount / ((1024 * 1024) / bd->sectorSize)));
+            M_PRINTF("rc16 = 0x%08x%08x %u-byte logical blocks: (%lu MiB)\n", sectorCount_u32[1], sectorCount_u32[0], bd->sectorSize,
+                (u32)((bd->sectorCount * bd->sectorSize) >> 20));
         }
     }
 

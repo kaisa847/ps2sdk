@@ -155,6 +155,7 @@ static time_t io_to_posix_time(const unsigned char *ps2time)
         tim.tm_mday = ps2time[4];
         tim.tm_mon  = ps2time[5] - 1;
         tim.tm_year = ((u16)ps2time[6] | ((u16)ps2time[7] << 8)) - 1900;
+        tim.tm_isdst = -1; /* local time: let mktime() find out whether DST applies */
         return mktime(&tim);
 }
 

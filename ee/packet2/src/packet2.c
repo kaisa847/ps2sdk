@@ -101,8 +101,10 @@ void packet2_reset(packet2_t *packet2, u8 clear_mem)
 void packet2_add(packet2_t *a, packet2_t *b)
 {
     assert(packet2_get_qw_count(a) + packet2_get_qw_count(b) <= a->max_qwords_count);
-    memcpy(a->next, b->base, (u32)b->next - (u32)b->base);
-    a->next = a->base + packet2_get_qw_count(b) + 1;
+    u32 size = (u32)b->next - (u32)b->base;
+
+    memcpy(a->next, b->base, size);
+    a->next = (qword_t *)((u8 *)a->next + size);
 }
 
 void packet2_print(packet2_t *packet2, u32 qw_count)

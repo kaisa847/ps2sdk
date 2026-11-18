@@ -501,17 +501,17 @@ static int CheckPartitions(int device, apa_cache_t *clink)
 
     if ((result = ReadPartitionMap(device, clink, &MainCount, &SubCount)) == 0) {
         int i, sub, count;
-        apa_cache_t *clink2, *clink_sub;
+        apa_cache_t *main_part, *sub_part;
 
         APA_PRINTF("check main partitions.\n");
 
         for (i = 0; i < MainCount && result == 0; i++) {
-            if ((clink2 = apaCacheGetHeader(device, ((u32 *)IOBuffer)[i], 0, &result)) != NULL) {
+            if ((main_part = apaCacheGetHeader(device, ((u32 *)IOBuffer)[i], 0, &result)) != NULL) {
                 int missing_sub_found;
                 apa_sub_t *pSubs;
 
                 // Check through the list of sub-partitions, to see if a the sub-partition belongs to a main partition.
-                for (missing_sub_found = 0, sub = 0, pSubs = clink2->header->subs; (u32)sub < clink2->header->nsub; sub++, pSubs++) {
+                for (missing_sub_found = 0, sub = 0, pSubs = main_part->header->subs; (u32)sub < main_part->header->nsub; sub++, pSubs++) {
                     int flag;
 
                     for (flag = 0, count = 0; count < SubCount; count++) {
@@ -526,8 +526,8 @@ static int CheckPartitions(int device, apa_cache_t *clink)
                         APA_PRINTF("missing sub partition found.\n");
 
                         if (!missing_sub_found) {
-                            clink2->header->nsub = sub;
-                            clink2->flags |= APA_CACHE_FLAG_DIRTY;
+                            main_part->header->nsub = sub;
+                            main_part->flags |= APA_CACHE_FLAG_DIRTY;
                             missing_sub_found = 1; //"missing sub" found.
                             apaCacheFlushAllDirty(device);
                         }
@@ -536,53 +536,53 @@ static int CheckPartitions(int device, apa_cache_t *clink)
                         if (missing_sub_found) {
                             APA_PRINTF("remove sub partition follows missing partition.\n");
 
-                            if ((clink_sub = apaCacheGetHeader(device, pSubs->start, 0, &result)) != NULL) {
-                                result = apaDelete(clink_sub);
+                            if ((sub_part = apaCacheGetHeader(device, pSubs->start, 0, &result)) != NULL) {
+                                result = apaDelete(sub_part);
                             }
                         }
                     } // Otherwise, the sub-partition is okay.
                 }
 
-                apaCacheFree(clink2);
+                apaCacheFree(main_part);
             }
         }
 
         if (result >= 0) {
             if ((result = ReadPartitionMap(device, clink, &MainCount, &SubCount)) == 0) {
-                u32 *ptr;
+                u32 *sub_lba;
 
                 APA_PRINTF("check sub partitions.\n");
 
-                for (sub = 0, ptr = (u32 *)IOBuffer2; sub < SubCount && result == 0; ptr++, sub++) {
+                for (sub = 0, sub_lba = (u32 *)IOBuffer2; sub < SubCount && result == 0; sub_lba++, sub++) {
                     // Check through the list of main partitions, to see if the sub-partition belongs to a main partition.
-                    if ((clink2 = apaCacheGetHeader(device, *ptr, 0, &result)) != NULL) {
-                        for (i = 0; ((u32 *)IOBuffer)[i] != clink2->header->main && i < MainCount; i++)
+                    if ((sub_part = apaCacheGetHeader(device, *sub_lba, 0, &result)) != NULL) {
+                        for (i = 0; ((u32 *)IOBuffer)[i] != sub_part->header->main && i < MainCount; i++)
                             ;
 
                         if (MainCount == i) {
-                            APA_PRINTF("this sub(start = %08lx)is not belong to anyone, remove it.\n", clink2->header->start);
-                            if ((result = apaDelete(clink2)) != 0) {
+                            APA_PRINTF("this sub(start = %08lx)is not belong to anyone, remove it.\n", sub_part->header->start);
+                            if ((result = apaDelete(sub_part)) != 0) {
                                 APA_PRINTF("remove partition failed.\n");
                             }
                         } else {
                             // Check if the sub-partition belongs to the main partition's sub-partition list.
-                            if ((clink_sub = apaCacheGetHeader(device, clink2->header->main, 0, &result)) != NULL) {
-                                for (count = 0; (u32)count < clink_sub->header->nsub; count++) {
-                                    if (clink_sub->header->subs[count].start == *ptr) {
+                            if ((main_part = apaCacheGetHeader(device, sub_part->header->main, 0, &result)) != NULL) {
+                                for (count = 0; (u32)count < main_part->header->nsub; count++) {
+                                    if (main_part->header->subs[count].start == *sub_lba) {
                                         break;
                                     }
                                 }
 
-                                if (clink_sub->header->nsub == (u32)count) {
+                                if (main_part->header->nsub == (u32)count) {
                                     APA_PRINTF("this subpartition is not belong to sub list.\n");
-                                    apaDelete(clink2);
-                                    apaCacheFree(clink_sub);
+                                    apaDelete(sub_part);
+                                    apaCacheFree(main_part);
                                 } else {
-                                    apaCacheFree(clink_sub);
-                                    apaCacheFree(clink2);
+                                    apaCacheFree(main_part);
+                                    apaCacheFree(sub_part);
                                 }
                             } else {
-                                apaCacheFree(clink2);
+                                apaCacheFree(sub_part);
                             }
                         }
                     } else {

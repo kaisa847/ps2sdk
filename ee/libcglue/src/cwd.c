@@ -17,6 +17,28 @@
 #include <errno.h>
 #include <stdlib.h>
 
+/* Same as snprintf(out, size, "%.*s%.*s%.*s", alen, a, blen, b, clen, c),
+ * without pulling the whole printf family into every program: these functions
+ * run at startup (chdir via __init_cwd). Returns the length of the full result. */
+static inline size_t __join3(char *out, size_t size, const char *a, size_t alen,
+                             const char *b, size_t blen, const char *c, size_t clen)
+{
+	const char *part[3] = { a, b, c };
+	size_t plen[3] = { a ? strnlen(a, alen) : 0, b ? strnlen(b, blen) : 0, c ? strnlen(c, clen) : 0 };
+	size_t pos = 0, i, n;
+
+	for (i = 0; i < 3; i++) {
+		if (pos + 1 < size) {
+			n = plen[i] < size - 1 - pos ? plen[i] : size - 1 - pos;
+			memcpy(out + pos, part[i], n);
+		}
+		pos += plen[i];
+	}
+	if (size)
+		out[pos < size ? pos : size - 1] = '\0';
+	return pos;
+}
+
 #ifdef F___cwd
 /* the present working directory variable. */
 char __cwd[MAXNAMLEN + 1] = { 0 };
@@ -123,7 +145,7 @@ char *getcwd(char *buf, size_t size)
 		return NULL;
 	}
 
-	snprintf(buf, size, "%.*s", __cwd_len, __cwd);
+	__join3(buf, size, __cwd, __cwd_len, NULL, 0, NULL, 0);
 	return buf;
 }
 #endif
@@ -215,16 +237,16 @@ int __path_absolute(const char *in, char *out, int len)
 
 	if((separatorType != SeparatorTypeNotFound) && (separatorType == SeparatorTypeNone || in[dr] == separator)) {
 		/* It starts with "drive:" and has no separator or "drive:/", so it's already absolute */
-		out_len = snprintf(out, len, "%.*s", in_len, in);
+		out_len = __join3(out, len, in, in_len, NULL, 0, NULL, 0);
 	} else if((separatorType != SeparatorTypeNotFound) && in[dr - 1] == ':') {
 		/* It starts with "drive:", so it's already absoulte, however it misses the "/" after unit */
-		out_len = snprintf(out, len, "%.*s%c%.*s", dr, in, separator, in_len - dr, in + dr);
+		out_len = __join3(out, len, in, dr, &separator, 1, in + dr, in_len - dr);
 	} else if(in[0] == '\\' || in[0] == '/') {
 		/* It's absolute, but missing the drive, so use cwd's drive */
-		out_len = snprintf(out, len, "%.*s%.*s", __get_drive(__cwd, &separatorType, __cwd_len), __cwd, in_len, in);
+		out_len = __join3(out, len, __cwd, __get_drive(__cwd, &separatorType, __cwd_len), in, in_len, NULL, 0);
 	} else {
 		/* It's not absolute, so append it to the current cwd */
-		out_len = snprintf(out, len, "%.*s%c%.*s", __cwd_len, __cwd, separator, in_len, in);
+		out_len = __join3(out, len, __cwd, __cwd_len, &separator, 1, in, in_len);
 	}
 	if (out_len >= len) return -1;
 

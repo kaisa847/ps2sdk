@@ -543,8 +543,12 @@ int chdir(const char *path) {
 		return -1;
 	}
 
-	__cwd_len = snprintf(__cwd, sizeof(__cwd), "%.*s", sizeof(dest) - 1, dest);
+	/* No snprintf here: chdir runs at startup (__init_cwd), and snprintf would
+	 * pull the whole printf family into every program. */
+	__cwd_len = strnlen(dest, sizeof(dest) - 1);
 	__cwd_len = (__cwd_len > (sizeof(__cwd) - 1)) ? (sizeof(__cwd) - 1) : __cwd_len;
+	memcpy(__cwd, dest, __cwd_len);
+	__cwd[__cwd_len] = '\0';
 	return 0;
 }
 #endif

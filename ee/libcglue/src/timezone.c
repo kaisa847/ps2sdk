@@ -16,6 +16,7 @@
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <reent.h>
@@ -34,10 +35,27 @@ void _libcglue_timezone_update_impl()
     int minutes = tzOffsetAbs - hours * 60;
     int daylight = configIsDaylightSavingEnabled();
     static char tz[28];
-	#pragma GCC diagnostic push
-	#pragma GCC diagnostic ignored "-Wformat-overflow"
-    snprintf(tz, sizeof(tz), "GMT%s%02i:%02i%s", tzOffset < 0 ? "+" : "-", hours, minutes, daylight ? "DST" : "");
-	#pragma GCC diagnostic pop
+    char *p = tz;
+
+    /* Builds "GMT-hh:mm" or "GMT-hh:mmDST" by hand, the same as
+     * snprintf(tz, sizeof(tz), "GMT%s%02i:%02i%s", ...), so that a program
+     * that uses time functions does not also get the printf family. The OSD
+     * time zone is an 11-bit offset in minutes, so hours has two digits. */
+    if (hours > 99)
+        hours = 99;
+    memcpy(p, "GMT", 3);
+    p += 3;
+    *p++ = tzOffset < 0 ? '+' : '-';
+    *p++ = '0' + hours / 10;
+    *p++ = '0' + hours % 10;
+    *p++ = ':';
+    *p++ = '0' + minutes / 10;
+    *p++ = '0' + minutes % 10;
+    if (daylight) {
+        memcpy(p, "DST", 3);
+        p += 3;
+    }
+    *p = '\0';
     setenv("TZ", tz, 1);
 }
 #endif

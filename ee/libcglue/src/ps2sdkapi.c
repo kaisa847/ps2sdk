@@ -285,7 +285,15 @@ int __fioDreadHelper(void *userdata, struct dirent *dir)
     }
 
     dir->d_fileno = rv; // TODO: This number should be in theory a unique number per file
-    snprintf(dir->d_name, sizeof(dir->d_name), "%.*s", (int)(sizeof(iodir.name) - 1), iodir.name);
+    {
+        /* No snprintf: this is linked into every program through the fio ops. */
+        size_t n = strnlen(iodir.name, sizeof(iodir.name) - 1);
+
+        if (n > sizeof(dir->d_name) - 1)
+            n = sizeof(dir->d_name) - 1;
+        memcpy(dir->d_name, iodir.name, n);
+        dir->d_name[n] = '\0';
+    }
     dir->d_reclen = 0;
     switch (iodir.stat.mode & FIO_SO_IFMT) {
         case FIO_SO_IFLNK: dir->d_type = DT_LNK;     break;

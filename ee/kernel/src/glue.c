@@ -16,6 +16,36 @@
 #include "kernel.h"
 #include <mipscopaccess.h>
 
+/* _SyncDCache() and _InvalidDCache() walk all 128 lines of the data cache by
+ * index, whatever the size of the range, which costs about 2000 cycles even
+ * for a few bytes. For small ranges in kuseg RAM, use the Hit cache ops on
+ * each line of the range instead.
+ *
+ * User RAM in kuseg (0x00080000 to 0x01ffffff) is mapped 1:1 to physical
+ * memory, and the index loop matches lines by their physical tag, so on these
+ * addresses both ways reach exactly the same lines. sceSifWriteBackDCache()
+ * already uses the Hit ops there. Other addresses (the kernel area, kseg0,
+ * the uncached and UCAB mirrors) keep the index loop and its behaviour. */
+#define DCACHE_HIT_MAX (16 * 1024)
+
+static inline int dcache_use_hit_ops(u32 start, u32 end)
+{
+    return start >= 0x00080000 && end < 0x02000000 && start <= end && end - start < DCACHE_HIT_MAX;
+}
+
+/* start and end are line addresses; end is included, like in the index loop. */
+static inline void dcache_hit_writeback_invalidate(u32 start, u32 end)
+{
+    for (; start <= end; start += 64)
+        __asm__ __volatile__("sync.l\n\tcache 0x18, 0(%0)\n\tsync.l" : : "r"(start) : "memory");
+}
+
+static inline void dcache_hit_invalidate(u32 start, u32 end)
+{
+    for (; start <= end; start += 64)
+        __asm__ __volatile__("sync.l\n\tcache 0x1a, 0(%0)\n\tsync.l" : : "r"(start) : "memory");
+}
+
 #ifdef F_DIntr
 int DIntr()
 {
@@ -244,6 +274,11 @@ void SyncDCache(void *start, void *end)
 {
     int eie;
 
+    if (dcache_use_hit_ops((u32)start & 0xffffffc0, (u32)end & 0xffffffc0)) {
+        dcache_hit_writeback_invalidate((u32)start & 0xffffffc0, (u32)end & 0xffffffc0);
+        return;
+    }
+
     eie = get_mips_cop_reg(0, COP0_REG_Status);
     eie &= 0x10000;
 
@@ -260,6 +295,10 @@ void SyncDCache(void *start, void *end)
 #ifdef F_iSyncDCache
 void iSyncDCache(void *start, void *end)
 {
+    if (dcache_use_hit_ops((u32)start & 0xffffffc0, (u32)end & 0xffffffc0)) {
+        dcache_hit_writeback_invalidate((u32)start & 0xffffffc0, (u32)end & 0xffffffc0);
+        return;
+    }
     _SyncDCache((void *)((u32)start & 0xffffffc0), (void *)((u32)end & 0xffffffc0));
 }
 #endif
@@ -268,6 +307,11 @@ void iSyncDCache(void *start, void *end)
 void InvalidDCache(void *start, void *end)
 {
     int eie;
+
+    if (dcache_use_hit_ops((u32)start & 0xffffffc0, (u32)end & 0xffffffc0)) {
+        dcache_hit_invalidate((u32)start & 0xffffffc0, (u32)end & 0xffffffc0);
+        return;
+    }
 
     eie = get_mips_cop_reg(0, COP0_REG_Status);
     eie &= 0x10000;
@@ -285,6 +329,10 @@ void InvalidDCache(void *start, void *end)
 #ifdef F_iInvalidDCache
 void iInvalidDCache(void *start, void *end)
 {
+    if (dcache_use_hit_ops((u32)start & 0xffffffc0, (u32)end & 0xffffffc0)) {
+        dcache_hit_invalidate((u32)start & 0xffffffc0, (u32)end & 0xffffffc0);
+        return;
+    }
     _InvalidDCache((void *)((u32)start & 0xffffffc0), (void *)((u32)end & 0xffffffc0));
 }
 #endif

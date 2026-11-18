@@ -28,7 +28,22 @@ struct __lock {
     int32_t sem_id;
     int32_t thread_id;
     int32_t count;
+    int32_t waiters;
 };
+
+/* Recursive locks (stdio, malloc, atexit, env) are taken for every getc, putc,
+ * malloc and free. They keep their state in the struct: thread_id is the owner,
+ * LOCK_FREE when nobody holds the lock and LOCK_HANDOFF while a released lock is
+ * passed on to a waiting thread; count is the nesting depth; waiters is the
+ * number of threads blocked on the semaphore. The semaphore starts at 0 and
+ * only wakes waiters, so taking and releasing a free lock needs no WaitSema()
+ * and no SignalSema().
+ *
+ * The state is only changed with interrupts disabled. The EE has a single core
+ * and switches threads only on interrupts and system calls, so each change is
+ * atomic. */
+#define LOCK_FREE    (-1)
+#define LOCK_HANDOFF (-2)
 
 #ifdef F___lock___sfp_recursive_mutex
 struct __lock __lock___sfp_recursive_mutex;
@@ -78,14 +93,15 @@ static inline void __common_lock_init(_LOCK_T lock)
 static inline void __common_lock_init_recursive(_LOCK_T lock)
 {
     ee_sema_t sema;
-    sema.init_count = 1;
+    sema.init_count = 0; /* only used to wake waiters, see LOCK_HANDOFF */
     sema.max_count  = 1;
     sema.option     = 0;
     sema.attr       = 0;
     sema.wait_threads = 0;
     lock->sem_id = CreateSema(&sema);
     lock->count = 0;
-    lock->thread_id = -1;
+    lock->thread_id = LOCK_FREE;
+    lock->waiters = 0;
 }
 
 static inline void __common_lock_close(_LOCK_T lock)
@@ -143,25 +159,29 @@ void __retarget_lock_acquire(_LOCK_T lock)
 void __retarget_lock_acquire_recursive(_LOCK_T lock)
 {
     int32_t thread_id = GetThreadId();
+    int intr = DIntr();
 
-    /* Recursive case: this thread already owns the gate. We can read
-     * thread_id/count without the gate because only the owning thread
-     * mutates them while it holds the gate, and only the owning thread
-     * can take this branch. */
-    if (lock->count > 0 && lock->thread_id == thread_id) {
+    if (lock->thread_id == thread_id) {
+        /* This thread already holds the lock. */
         lock->count++;
-        return;
+    } else if (lock->thread_id == LOCK_FREE) {
+        lock->thread_id = thread_id;
+        lock->count = 1;
+    } else {
+        /* Held by another thread, or being handed to a woken waiter: wait.
+         * The releasing thread sets thread_id to LOCK_HANDOFF and signals the
+         * semaphore once for each waiter it wakes, so a signal that comes
+         * between EIntr() and WaitSema() is not lost. */
+        lock->waiters++;
+        if (intr)
+            EIntr();
+        WaitSema(lock->sem_id);
+        intr = DIntr();
+        lock->thread_id = thread_id;
+        lock->count = 1;
     }
-
-    /* Otherwise acquire the gate for real. Only after WaitSema returns
-     * do we touch thread_id/count — putting count++ before WaitSema is
-     * what causes the classic recursive-mutex deadlock here, because a
-     * higher-priority thread preempting between count++ and WaitSema
-     * sees count>0, falls into the else branch, races past the sema, and
-     * then nobody signals it after release. */
-    WaitSema(lock->sem_id);
-    lock->thread_id = thread_id;
-    lock->count = 1;
+    if (intr)
+        EIntr();
 }
 #endif
 
@@ -176,18 +196,20 @@ int __retarget_lock_try_acquire(_LOCK_T lock)
 int __retarget_lock_try_acquire_recursive(_LOCK_T lock)
 {
     int32_t thread_id = GetThreadId();
+    int intr = DIntr();
+    int busy = 0;
 
-    if (lock->count > 0 && lock->thread_id == thread_id) {
+    if (lock->thread_id == thread_id) {
         lock->count++;
-        return 0;
+    } else if (lock->thread_id == LOCK_FREE) {
+        lock->thread_id = thread_id;
+        lock->count = 1;
+    } else {
+        busy = 1; /* held by another thread or being handed over */
     }
-
-    if (PollSema(lock->sem_id) <= 0) {
-        return 1; /* gate not free */
-    }
-    lock->thread_id = thread_id;
-    lock->count = 1;
-    return 0;
+    if (intr)
+        EIntr();
+    return busy;
 }
 #endif
 
@@ -201,22 +223,31 @@ void __retarget_lock_release(_LOCK_T lock)
 #ifdef F___retarget_lock_release_recursive
 void __retarget_lock_release_recursive(_LOCK_T lock)
 {
-    bool tobeRelease = false;
     int32_t thread_id = GetThreadId();
+    int intr, wake = 0;
+
     if (lock->thread_id != thread_id) {
         // error this shouldn't never happen
         perror("Error: Trying to release a lock that was not acquired by the current thread");
         exit(1);
     }
 
-    tobeRelease = lock->count == 1;
-    lock->count--;
-    if (lock->count == 0) {
-        lock->thread_id = -1;
+    intr = DIntr();
+    if (--lock->count == 0) {
+        if (lock->waiters > 0) {
+            /* Hand the lock to one waiter. Until it runs, thread_id stays
+             * LOCK_HANDOFF, so no other thread can take the lock first. */
+            lock->waiters--;
+            lock->thread_id = LOCK_HANDOFF;
+            wake = 1;
+        } else {
+            lock->thread_id = LOCK_FREE;
+        }
     }
-    if (tobeRelease) {
+    if (intr)
+        EIntr();
+    if (wake)
         SignalSema(lock->sem_id);
-    }
 }
 #endif
 

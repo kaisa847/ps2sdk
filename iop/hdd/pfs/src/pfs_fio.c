@@ -401,6 +401,33 @@ static int fileTransferRemainder(pfs_file_slot_t *fileSlot, void *buf, int size,
 	return size;
 }
 
+// Moves len bytes (a multiple of 4) from the word-aligned src up to dst, which is
+// 1 to 3 bytes above src. The areas overlap, so this copies from the end. The store
+// to dst word i also overwrites part of src word i, so every group of words is
+// loaded before any of it is stored.
+static void shiftUpUnaligned(u8 *dst, const u32 *src, u32 len)
+{
+	struct unaligned_u32 { u32 v; } __attribute__((packed));
+	struct unaligned_u32 *d = (struct unaligned_u32 *)dst;
+	u32 n = len / 4;
+
+	while (n >= 4)
+	{
+		u32 w3 = src[n - 1], w2 = src[n - 2], w1 = src[n - 3], w0 = src[n - 4];
+
+		d[n - 1].v = w3;
+		d[n - 2].v = w2;
+		d[n - 3].v = w1;
+		d[n - 4].v = w0;
+		n -= 4;
+	}
+	while (n > 0)
+	{
+		n--;
+		d[n].v = src[n];
+	}
+}
+
 // Does actual read/write of data from file
 static int fileTransfer(pfs_file_slot_t *fileSlot, u8 *buf, int size, int operation)
 {
@@ -481,10 +508,39 @@ static int fileTransfer(pfs_file_slot_t *fileSlot, u8 *buf, int size, int operat
 			}
 		}
 
+		// Reading whole sectors to a buffer that is not word-aligned. This is the
+		// usual case after a partial sector at an odd file offset. The block device
+		// needs a word-aligned buffer, so read to the word boundary just below buf
+		// in one transfer and shift the data up, instead of going through
+		// fileTransferRemainder() one sector at a time. The 1 to 3 bytes below buf
+		// are saved and restored.
+		if ((operation == 0) && !(blockpos->byte_offset & 0x1FF) && (size >= 512) && ((uiptr)buf & 3))
+		{
+			u8 *abuf = (u8 *)((uiptr)buf & ~3);
+			u32 lead = (uiptr)buf & 3;
+			u8 saved[3];
+
+			sectors = (u32)(bytes_remain / 512);
+			if ((u32)(size / 512) < sectors)	sectors = size / 512; //sectors=min(size/512, sectors)
+
+			memcpy(saved, abuf, lead);
+			result=pfsMount->blockDev->transfer(pfsMount->fd, abuf, bi->subpart,
+				 ((bi->number + blockpos->block_offset) << pfsMount->sector_scale)+(blockpos->byte_offset / 512),
+				 sectors, operation);
+			if (result >= 0)
+				shiftUpUnaligned(buf, (const u32 *)abuf, sectors * 512);
+			memcpy(abuf, saved, lead);
+			if (result < 0)
+			{
+				result |= 0x10000; // TODO: EIO define
+				break;
+			}
+			result = sectors * 512;
+		}
 		// If we are transferring size not a multiple of 512, under 512, or to
 		// an unaligned buffer we need to use a special function rather than
 		// just doing a ATA sector transfer.
-		if ((blockpos->byte_offset & 0x1FF) || (size < 512) || ((uiptr)buf & 3))
+		else if ((blockpos->byte_offset & 0x1FF) || (size < 512) || ((uiptr)buf & 3))
 		{
 			if ((result=fileTransferRemainder(fileSlot, buf, size, operation)) < 0)
 				break;
